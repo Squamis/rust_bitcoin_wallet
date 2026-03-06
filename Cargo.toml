@@ -1,0 +1,7 @@
+[package]
+name = "rust_bitcoin_wallet"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bip39 = "2.1"

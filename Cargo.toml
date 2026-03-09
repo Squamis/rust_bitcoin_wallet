@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 bip39 = "2.1"
+bitcoin = "0.32.8"

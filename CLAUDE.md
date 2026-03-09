@@ -23,18 +23,25 @@ Storage:            save_wallet, load_wallet
 
 Data flow: `Entropy → Mnemonic → Seed → Master Key → Child Keys → Public Keys → Addresses`
 
-## Current state (2026-03-06)
-- `src/main.rs`: CLI menu with match statement, all 12 functions stubbed with `todo!()`
-- `generate_mnemonic` has 4-step plan commented out, ready to implement
-- No functions are implemented yet — all return `todo!()`
+## Current state (2026-03-09)
+- Full key generation chain implemented and working:
+  - `generate_mnemonic` — reads /dev/urandom, creates 12-word BIP39 mnemonic, derives seed
+  - `seed_to_master_key` — BIP32 HMAC-SHA512 to get Xpriv (master private key + chain code)
+  - `derive_child_key` — walks BIP84 path m/84'/0'/0'/0/0 to get child Xpriv
+  - `private_to_public` — secp256k1 curve multiplication to get compressed public key
+  - `public_key_to_address` — Hash160 + bech32 encoding to get bc1q... address
+- `mnemonic_to_seed` was folded into `generate_mnemonic` (returns both mnemonic and seed)
+- Remaining stubs: build_transaction, sign_transaction, check_balance, broadcast_transaction, save_wallet, load_wallet
 
 ## Next steps (in order)
-1. Implement `generate_mnemonic` using bip39 crate
-2. Implement `mnemonic_to_seed`
-3. Add `bitcoin` crate to Cargo.toml
-4. Implement `seed_to_master_key` and `derive_child_key`
-5. Implement `private_to_public` and `public_key_to_address`
-6. Then move to transactions/network/storage
+1. Implement `save_wallet` and `load_wallet` — encrypt and persist the seed
+2. Implement `check_balance` — query a public API for UTXOs at the address
+3. Implement `build_transaction` and `sign_transaction`
+4. Implement `broadcast_transaction`
+
+## Future features
+- Make number of seed phrase words variable (12, 15, 18, 21, or 24) — currently hardcoded to 12
+- Replace /dev/urandom with `rand` crate's `OsRng` for cross-platform entropy (same security, works on Windows/macOS)
 
 ## Dependencies
 - `bip39 = "2.1"` — mnemonic seed phrase generation (already in Cargo.toml)

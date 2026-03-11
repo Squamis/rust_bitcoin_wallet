@@ -6,3 +6,9 @@ edition = "2024"
 [dependencies]
 bip39 = "2.1"
 bitcoin = "0.32.8"
+aes-gcm = "0.10"       # AES-256-GCM authenticated encryption
+pbkdf2 = "0.12"        # password → encryption key derivation (deliberately slow)
+sha2 = "0.10"           # SHA256 for PBKDF2's internal hash
+serde = { version = "1", features = ["derive"] }  # struct serialization
+serde_yaml = "0.9"      # save/load wallet file as YAML
+hex = "0.4"             # encode/decode bytes as hex strings

@@ -42,6 +42,8 @@ Data flow: `Entropy → Mnemonic → Seed → Master Key → Child Keys → Publ
 ## Future features
 - Make number of seed phrase words variable (12, 15, 18, 21, or 24) — currently hardcoded to 12
 - Replace /dev/urandom with `rand` crate's `OsRng` for cross-platform entropy (same security, works on Windows/macOS)
+- Configurable PBKDF2 rounds for save_wallet (currently hardcoded to 600,000)
+- Hide password input with `rpassword` crate
 
 ## Dependencies
 - `bip39 = "2.1"` — mnemonic seed phrase generation (already in Cargo.toml)

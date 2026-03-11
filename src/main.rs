@@ -1,10 +1,24 @@
 use std::io;
+use std::io::Write as IoWrite;
 use bip39::Mnemonic;
 use std::fs::File;
 use std::io::Read as IoRead;
 use bitcoin::bip32::{DerivationPath, Xpriv};
 use bitcoin::secp256k1::{PublicKey, Secp256k1};
 use bitcoin::{Address, CompressedPublicKey, Network};
+use aes_gcm::{Aes256Gcm, Nonce};
+use aes_gcm::aead::{Aead, KeyInit};
+use serde::{Serialize, Deserialize};
+
+// Struct to hold the encrypted wallet data for saving/loading
+// Serialize = can convert struct → YAML, Deserialize = can convert YAML → struct
+// Each field stores hex-encoded bytes so the YAML is human-readable
+#[derive(Serialize, Deserialize)]
+struct WalletFile {
+    salt: String,        // 16 bytes hex-encoded
+    nonce: String,       // 12 bytes hex-encoded
+    ciphertext: String,  // encrypted mnemonic hex-encoded
+}
 
 fn main() {
     println!("=== Rust Bitcoin Wallet ===\n");
@@ -206,12 +220,80 @@ fn broadcast_transaction() {
 
 // === Storage ===
 
-fn save_wallet() {
-    // Encrypt and save the seed phrase to disk
-    todo!()
+fn save_wallet(mnemonic: &Mnemonic) {
+    // Step 1: Ask the user for a password to encrypt the wallet file
+    // This is NOT the seed phrase — it's a separate password just for the file on disk
+    print!("Enter a password to encrypt your wallet: ");
+    io::Write::flush(&mut io::stdout()).unwrap();
+    let mut password = String::new();
+    io::stdin().read_line(&mut password).unwrap();
+    let password = password.trim();
+
+    // Step 2: Generate a random 16-byte salt
+    // The salt makes each password hash unique — two people with the same password
+    // get different encryption keys. Not secret, saved alongside the ciphertext.
+    let mut salt = [0u8; 16];
+    let mut rng = File::open("/dev/urandom").unwrap();
+    rng.read_exact(&mut salt).unwrap();
+
+    // Step 3: Derive a 32-byte encryption key from password + salt using PBKDF2
+    // PBKDF2 runs SHA256 many times (600,000 rounds) to make brute force slow
+    // Same concept as mnemonic → seed, just applied to a password
+    // ::<sha2::Sha256> is a "turbofish" — tells the generic function which hash to use
+    let mut key = [0u8; 32];
+    pbkdf2::pbkdf2_hmac::<sha2::Sha256>(
+        password.as_bytes(),
+        &salt,
+        600_000,
+        &mut key,
+    );
+
+    // Step 4: Generate a random 12-byte nonce for AES-GCM
+    // "Number used once" — must be unique per encryption with the same key
+    // Not secret, saved alongside the ciphertext
+    let mut nonce_bytes = [0u8; 12];
+    rng.read_exact(&mut nonce_bytes).unwrap();
+
+    // Step 5: Encrypt the mnemonic string with AES-256-GCM
+    // AES-256-GCM = authenticated encryption — it both encrypts AND detects tampering
+    // Inputs: key (step 3), nonce (step 4), plaintext (mnemonic words)
+    // Outputs: ciphertext + auth tag (tag is appended to ciphertext automatically)
+    let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher.encrypt(nonce, mnemonic.to_string().as_bytes()).unwrap();
+
+    // Step 6: Save salt + nonce + ciphertext to a YAML file
+    // All three are needed for decryption — salt and nonce aren't secret
+    // The security comes from the password → key derivation being slow
+    // hex::encode turns raw bytes into readable hex strings like "a3b1c9f2..."
+    let wallet_file = WalletFile {
+        salt: hex::encode(&salt),
+        nonce: hex::encode(&nonce_bytes),
+        ciphertext: hex::encode(&ciphertext),
+    };
+
+    let yaml = serde_yaml::to_string(&wallet_file).unwrap();
+    std::fs::write("wallet.yaml", &yaml).unwrap();
+    println!("\nWallet saved to wallet.yaml (encrypted)");
 }
 
 fn load_wallet() {
-    // Decrypt and load the seed phrase from disk
+    // Step 1: Read the YAML wallet file from disk
+    // Get the salt, nonce, and ciphertext back
+
+    // Step 2: Ask the user for their password
+
+    // Step 3: Re-derive the encryption key from password + salt
+    // Must use the exact same PBKDF2 settings (rounds, hash function)
+    // If the password is right, we get the same key as when we encrypted
+
+    // Step 4: Decrypt the ciphertext with key + nonce
+    // AES-GCM will fail here if the password was wrong or the file was tampered with
+    // This is the "authenticated" part — it doesn't just give you garbage, it refuses
+
+    // Step 5: Parse the decrypted string back into a Mnemonic
+    // Then derive seed → master key → child key → public key → address
+    // Same chain as generate_wallet, just starting from a saved mnemonic
+
     todo!()
 }

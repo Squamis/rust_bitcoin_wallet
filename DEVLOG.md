@@ -72,3 +72,39 @@ Learning project — building a Bitcoin wallet from scratch to understand how cr
 - Implement `save_wallet` and `load_wallet` — encrypt and persist the seed
 - Implement `check_balance` — query a public API for UTXOs
 - Then tackle `build_transaction` and `sign_transaction`
+
+## 2026-03-11
+
+**Session goal**: Implement save_wallet and load_wallet — encrypt and persist the seed to disk.
+
+**What I learned**:
+- AES-256-GCM = authenticated encryption — encrypts AND detects tampering. If someone modifies the file, decryption refuses instead of giving garbage
+- Salt (16 random bytes) — mixed into password hash so same password produces different keys each time. Not secret, saved in the file
+- Nonce (12 random bytes) — "number used once" per encryption. Reusing a nonce with the same key breaks the encryption. Also not secret
+- PBKDF2 — turns a password into an encryption key, deliberately slow (600,000 rounds of SHA256) to make brute force impractical
+- Turbofish `::<Type>` — tells a generic function which type to use explicitly, needed when Rust can't infer it from context (e.g., `pbkdf2_hmac::<sha2::Sha256>`)
+- `.unwrap()` — extracts the value from a `Result::Ok`, crashes on `Result::Err`. Shortcut for learning, real code handles errors
+- `use` — brings a name into scope so you don't have to write the full path every time
+- `[0u8; 12]` — array initialization: 12 elements, all zero, type u8. Creates an empty buffer to fill with random bytes
+- `#[derive(Serialize, Deserialize)]` — attribute macro that auto-generates code to convert a struct to/from YAML
+- `hex::encode` — turns raw bytes into readable hex strings
+- `std::fs::write` — convenience function to write a string to a file in one line (vs File::create + write_all)
+- RAII in Rust — resources (like file handles) are automatically cleaned up when the variable goes out of scope, no explicit `.close()` needed
+
+**What I built**:
+- `save_wallet` — fully implemented: password input → PBKDF2 key derivation → AES-256-GCM encryption → YAML file output
+- `WalletFile` struct with serde derive for YAML serialization
+- `load_wallet` — blocked out with step-by-step comments (not yet implemented)
+- Added 6 new crates: aes-gcm, pbkdf2, sha2, serde, serde_yaml, hex
+
+**Decisions made**:
+- YAML over JSON for wallet file format (more human-readable for a simple flat structure)
+- Hex-encode all byte fields in the YAML for readability
+- 600,000 PBKDF2 rounds (OWASP recommendation), configurable rounds deferred as future feature
+- Save wallet.yaml in the current directory for simplicity
+- Deferred `rpassword` crate for hiding password input as future feature
+
+**Next session**:
+- Implement `load_wallet` — read YAML, ask password, PBKDF2, decrypt, reconstruct wallet
+- Wire save_wallet into generate_wallet (prompt "Save this wallet?" after generating)
+- Implement `check_balance` — query a public API for UTXOs

@@ -51,7 +51,7 @@ fn main() {
 
 fn generate_wallet() {
     // Chain: generate_mnemonic → seed_to_master_key → derive_child_key → address
-    let (_mnemonic, seed) = generate_mnemonic();
+    let (mnemonic, seed) = generate_mnemonic();
     let master_key = seed_to_master_key(&seed);
     let child_key = derive_child_key(&master_key);
     let public_key = private_to_public(&child_key);
@@ -62,8 +62,15 @@ fn generate_wallet() {
     println!("=== WALLET GENERATED SUCCESSFULLY ===");
     println!("  Fingerprint: {}", master_key.fingerprint(&secp));
     println!("  Receive address: {}", address);
-    println!("\nYou could send Bitcoin to this address right now.");
-    println!("Next to implement: transactions, balance checking, storage.");
+
+    // Ask if the user wants to save the wallet
+    print!("\nSave this wallet? (y/n): ");
+    io::Write::flush(&mut io::stdout()).unwrap();
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer).unwrap();
+    if answer.trim().to_lowercase() == "y" {
+        save_wallet(&mnemonic);
+    }
 }
 
 fn send_transaction() {
@@ -280,20 +287,57 @@ fn save_wallet(mnemonic: &Mnemonic) {
 fn load_wallet() {
     // Step 1: Read the YAML wallet file from disk
     // Get the salt, nonce, and ciphertext back
+    let yaml = std::fs::read_to_string("wallet.yaml").unwrap();
+    let wallet_file: WalletFile = serde_yaml::from_str(&yaml).unwrap();
 
-    // Step 2: Ask the user for their password
+    // Step 2: Decode the hex strings back into raw bytes
+    // hex::decode is the reverse of hex::encode — "a3b1c9f2" → [163, 177, 201, 242]
+    // Returns Vec<u8> (dynamic size) instead of [u8; N] (fixed size)
+    // because hex::decode doesn't know the length at compile time
+    let salt = hex::decode(&wallet_file.salt).unwrap();
+    let nonce_bytes = hex::decode(&wallet_file.nonce).unwrap();
+    let ciphertext = hex::decode(&wallet_file.ciphertext).unwrap();
 
-    // Step 3: Re-derive the encryption key from password + salt
+    // Step 3: Ask the user for their password
+    print!("Enter your wallet password: ");
+    io::Write::flush(&mut io::stdout()).unwrap();
+    let mut password = String::new();
+    io::stdin().read_line(&mut password).unwrap();
+    let password = password.trim();
+
+    // Step 4: Re-derive the encryption key from password + salt
     // Must use the exact same PBKDF2 settings (rounds, hash function)
     // If the password is right, we get the same key as when we encrypted
+    let mut key = [0u8; 32];
+    pbkdf2::pbkdf2_hmac::<sha2::Sha256>(
+        password.as_bytes(),
+        &salt,
+        600_000,
+        &mut key,
+    );
 
-    // Step 4: Decrypt the ciphertext with key + nonce
+    // Step 5: Decrypt the ciphertext with key + nonce
     // AES-GCM will fail here if the password was wrong or the file was tampered with
     // This is the "authenticated" part — it doesn't just give you garbage, it refuses
+    let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let plaintext = cipher.decrypt(nonce, ciphertext.as_ref()).unwrap();
 
-    // Step 5: Parse the decrypted string back into a Mnemonic
-    // Then derive seed → master key → child key → public key → address
-    // Same chain as generate_wallet, just starting from a saved mnemonic
+    // Step 6: Parse the decrypted bytes back into a Mnemonic
+    // String::from_utf8 converts raw bytes → String (the 12 words separated by spaces)
+    // .parse() converts the string → Mnemonic type (same as DerivationPath parse)
+    let mnemonic_str = String::from_utf8(plaintext).unwrap();
+    let mnemonic: Mnemonic = mnemonic_str.parse().unwrap();
 
-    todo!()
+    // Step 7: Rebuild the wallet — same chain as generate_wallet, just starting from saved mnemonic
+    let seed = mnemonic.to_seed("");
+    let master_key = seed_to_master_key(&seed);
+    let child_key = derive_child_key(&master_key);
+    let public_key = private_to_public(&child_key);
+    let address = public_key_to_address(&public_key);
+
+    let secp = Secp256k1::new();
+    println!("=== WALLET LOADED SUCCESSFULLY ===");
+    println!("  Fingerprint: {}", master_key.fingerprint(&secp));
+    println!("  Receive address: {}", address);
 }

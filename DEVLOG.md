@@ -104,7 +104,11 @@ Learning project — building a Bitcoin wallet from scratch to understand how cr
 - Save wallet.yaml in the current directory for simplicity
 - Deferred `rpassword` crate for hiding password input as future feature
 
+**What I built (continued)**:
+- `load_wallet` — reads wallet.yaml, hex-decodes fields, asks password, PBKDF2 re-derives key, AES-GCM decrypts, parses mnemonic, rebuilds full wallet chain
+- Wired save_wallet into generate_wallet with "Save this wallet? (y/n)" prompt
+- Added wallet.yaml to .gitignore (encrypted key material shouldn't be in git)
+- Full round-trip tested: generate → save → load produces same fingerprint and address
+
 **Next session**:
-- Implement `load_wallet` — read YAML, ask password, PBKDF2, decrypt, reconstruct wallet
-- Wire save_wallet into generate_wallet (prompt "Save this wallet?" after generating)
 - Implement `check_balance` — query a public API for UTXOs

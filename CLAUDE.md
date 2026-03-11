@@ -23,7 +23,7 @@ Storage:            save_wallet, load_wallet
 
 Data flow: `Entropy → Mnemonic → Seed → Master Key → Child Keys → Public Keys → Addresses`
 
-## Current state (2026-03-09)
+## Current state (2026-03-11)
 - Full key generation chain implemented and working:
   - `generate_mnemonic` — reads /dev/urandom, creates 12-word BIP39 mnemonic, derives seed
   - `seed_to_master_key` — BIP32 HMAC-SHA512 to get Xpriv (master private key + chain code)
@@ -31,13 +31,15 @@ Data flow: `Entropy → Mnemonic → Seed → Master Key → Child Keys → Publ
   - `private_to_public` — secp256k1 curve multiplication to get compressed public key
   - `public_key_to_address` — Hash160 + bech32 encoding to get bc1q... address
 - `mnemonic_to_seed` was folded into `generate_mnemonic` (returns both mnemonic and seed)
-- Remaining stubs: build_transaction, sign_transaction, check_balance, broadcast_transaction, save_wallet, load_wallet
+- `save_wallet` — AES-256-GCM encryption with PBKDF2 key derivation, saves to wallet.yaml
+- `load_wallet` — reads wallet.yaml, decrypts, reconstructs full wallet from mnemonic
+- `generate_wallet` prompts to save after generating
+- Remaining stubs: build_transaction, sign_transaction, check_balance, broadcast_transaction
 
 ## Next steps (in order)
-1. Implement `save_wallet` and `load_wallet` — encrypt and persist the seed
-2. Implement `check_balance` — query a public API for UTXOs at the address
-3. Implement `build_transaction` and `sign_transaction`
-4. Implement `broadcast_transaction`
+1. Implement `check_balance` — query a public API for UTXOs at the address
+2. Implement `build_transaction` and `sign_transaction`
+3. Implement `broadcast_transaction`
 
 ## Future features
 - Make number of seed phrase words variable (12, 15, 18, 21, or 24) — currently hardcoded to 12

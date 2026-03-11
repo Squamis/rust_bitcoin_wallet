@@ -110,5 +110,11 @@ Learning project — building a Bitcoin wallet from scratch to understand how cr
 - Added wallet.yaml to .gitignore (encrypted key material shouldn't be in git)
 - Full round-trip tested: generate → save → load produces same fingerprint and address
 
+**What I built (continued)**:
+- `check_balance` — queries Blockstream Esplora API for UTXOs at an address, sums values in satoshis, displays BTC conversion
+- Added `reqwest` (blocking HTTP client) and `serde_json` crates
+- Tested with a funded mainnet address (89 UTXOs, 0.165 BTC) and our empty generated address (0 sats)
+
 **Next session**:
-- Implement `check_balance` — query a public API for UTXOs
+- Implement `build_transaction` and `sign_transaction`
+- Implement `broadcast_transaction`

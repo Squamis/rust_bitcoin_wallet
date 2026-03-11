@@ -216,8 +216,33 @@ fn sign_transaction() {
 // === Network ===
 
 fn check_balance() {
-    // Query the blockchain for unspent outputs (UTXOs) at this address
-    todo!()
+    // Step 1: Ask the user for a Bitcoin address to check
+    print!("Enter a Bitcoin address: ");
+    io::Write::flush(&mut io::stdout()).unwrap();
+    let mut address = String::new();
+    io::stdin().read_line(&mut address).unwrap();
+    let address = address.trim();
+
+    // Step 2: Query Blockstream's Esplora API for UTXOs at this address
+    // A UTXO = an unspent chunk of Bitcoin sitting at this address
+    // The API returns a JSON array of all UTXOs (txid, output index, value in satoshis)
+    let url = format!("https://blockstream.info/api/address/{}/utxo", address);
+    let response = reqwest::blocking::get(&url).unwrap();
+    let utxos: Vec<serde_json::Value> = response.json().unwrap();
+
+    // Step 3: Sum up all UTXO values to get the total balance
+    // Each UTXO has a "value" field in satoshis (1 BTC = 100,000,000 satoshis)
+    let mut total_sats: u64 = 0;
+    for utxo in &utxos {
+        let value = utxo["value"].as_u64().unwrap_or(0);
+        total_sats += value;
+    }
+
+    // Step 4: Display the balance
+    let btc = total_sats as f64 / 100_000_000.0;
+    println!("\nAddress: {}", address);
+    println!("  UTXOs: {}", utxos.len());
+    println!("  Balance: {} sats ({:.8} BTC)", total_sats, btc);
 }
 
 fn broadcast_transaction() {

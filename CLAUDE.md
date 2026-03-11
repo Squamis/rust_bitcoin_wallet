@@ -34,7 +34,8 @@ Data flow: `Entropy → Mnemonic → Seed → Master Key → Child Keys → Publ
 - `save_wallet` — AES-256-GCM encryption with PBKDF2 key derivation, saves to wallet.yaml
 - `load_wallet` — reads wallet.yaml, decrypts, reconstructs full wallet from mnemonic
 - `generate_wallet` prompts to save after generating
-- Remaining stubs: build_transaction, sign_transaction, check_balance, broadcast_transaction
+- `check_balance` — queries Blockstream Esplora API for UTXOs, sums satoshis
+- Remaining stubs: build_transaction, sign_transaction, broadcast_transaction
 
 ## Next steps (in order)
 1. Implement `check_balance` — query a public API for UTXOs at the address

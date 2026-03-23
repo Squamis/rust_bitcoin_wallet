@@ -118,3 +118,44 @@ Learning project — building a Bitcoin wallet from scratch to understand how cr
 **Next session**:
 - Implement `build_transaction` and `sign_transaction`
 - Implement `broadcast_transaction`
+
+## 2026-03-22
+
+**Session goal**: Implement build_transaction — construct an unsigned Bitcoin transaction from UTXOs.
+
+**What I learned**:
+- Bitcoin transactions are like cash, not bank transfers — you spend entire UTXOs and make change
+- A UTXO must be spent entirely — you can't take part of it. Leftovers go into a change output back to your own address
+- The fee is implicit — it's the gap between total inputs and total outputs. No explicit fee field
+- If you forget the change output, the entire leftover goes to the miner as fee (people have lost thousands this way)
+- Transaction size determines the fee: more inputs = bigger tx = higher fee (~68 bytes per input, ~31 per output)
+- Fee rate (sats/byte) comes from the network — miners prioritize higher fee-per-byte transactions because block space is limited
+- `OutPoint` = txid + vout — the unique identifier for a specific UTXO
+- `script_pubkey` = the locking script on an output that says who can spend it. Generated from the recipient's address
+- `..Default::default()` in Rust — fills remaining struct fields with defaults (used for TxIn's empty witness/signature fields)
+- `Amount::from_sat()` — the bitcoin crate wraps satoshi values in a type-safe Amount wrapper
+- `parse::<Address<_>>()` — the `<_>` wildcard lets Rust infer the generic parameter
+- `.require_network(Network::Bitcoin)` — validates an address is for mainnet, not testnet
+
+**What I built**:
+- `Utxo` struct with `#[derive(Deserialize)]` — parses API response directly instead of raw JSON. Type safety catches field name typos at compile time
+- `build_transaction` — fully blocked out and implemented (7 steps):
+  1. Get recipient address + amount from user
+  2. Fetch UTXOs from Esplora API
+  3. Select UTXOs (simple walk-through strategy, TODO: smarter consolidation)
+  4. Calculate fee from transaction size × network fee rate
+  5. Calculate change
+  6. Build Transaction struct with TxIn inputs and TxOut outputs
+  7. Print summary (return value TODO — needs sign_transaction wired up)
+- Refactored `load_wallet` into `load_wallet_from_file() -> (Xpriv, Address)` + `load_existing_wallet()` menu wrapper
+- Insufficient funds check (before and after fee calculation)
+
+**Decisions made**:
+- Simple UTXO selection (first-fit) for now — smarter consolidation deferred as TODO
+- 6-block fee target (~1 hour confirmation) with 5 sat/byte fallback
+- Placeholder fee in UTXO selection step, re-verified after real fee calculation
+
+**Next session**:
+- Implement `sign_transaction` — sign each input with private key
+- Implement `broadcast_transaction` — push signed tx to network via Esplora API
+- Wire up `send_transaction` to chain: load wallet → build → sign → broadcast

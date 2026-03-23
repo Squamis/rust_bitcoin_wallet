@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Read as IoRead;
 use bitcoin::bip32::{DerivationPath, Xpriv};
 use bitcoin::secp256k1::{PublicKey, Secp256k1};
-use bitcoin::{Address, CompressedPublicKey, Network};
+use bitcoin::{Address, Amount, CompressedPublicKey, Network, OutPoint, Transaction, TxIn, TxOut, absolute, transaction};
 use aes_gcm::{Aes256Gcm, Nonce};
 use aes_gcm::aead::{Aead, KeyInit};
 use serde::{Serialize, Deserialize};
@@ -18,6 +18,16 @@ struct WalletFile {
     salt: String,        // 16 bytes hex-encoded
     nonce: String,       // 12 bytes hex-encoded
     ciphertext: String,  // encrypted mnemonic hex-encoded
+}
+
+// Represents one unspent transaction output (UTXO) sitting at our address
+// Each UTXO is a chunk of Bitcoin we can spend — like a bill in our wallet
+// Deserialize lets serde_json parse the API response directly into this struct
+#[derive(Deserialize)]
+struct Utxo {
+    txid: String,   // which transaction created this UTXO
+    vout: u32,      // which output index within that transaction
+    value: u64,     // amount in satoshis
 }
 
 fn main() {
@@ -41,7 +51,7 @@ fn main() {
         "1" => generate_wallet(),
         "2" => check_balance(),
         "3" => send_transaction(),
-        "4" => load_wallet(),
+        "4" => load_existing_wallet(),
         "5" => println!("Goodbye!"),
         _ => println!("Invalid option: '{}'", input.trim()),
     }
@@ -203,9 +213,139 @@ fn public_key_to_address(public_key: &PublicKey) -> Address {
 
 // === Transaction ===
 
-fn build_transaction() {
-    // Construct a transaction: which UTXOs to spend, where to send, how much fee
-    todo!()
+fn build_transaction(our_address: &Address) {
+    // Step 1: Ask the user for the recipient address and amount to send
+    print!("Enter recipient address: ");
+    io::Write::flush(&mut io::stdout()).unwrap();
+    let mut recipient_input = String::new();
+    io::stdin().read_line(&mut recipient_input).unwrap();
+    // .parse() validates the address format, checksum, and network
+    // require_network ensures we don't accidentally send mainnet coins to a testnet address
+    let recipient: Address = recipient_input.trim().parse::<Address<_>>().unwrap()
+        .require_network(Network::Bitcoin).unwrap();
+
+    print!("Enter amount to send (in sats): ");
+    io::Write::flush(&mut io::stdout()).unwrap();
+    let mut amount_input = String::new();
+    io::stdin().read_line(&mut amount_input).unwrap();
+    let send_amount: u64 = amount_input.trim().parse().unwrap();
+
+    // Step 2: Fetch our UTXOs from the Esplora API (same as check_balance)
+    // Query Blockstream's API for all unspent outputs at our address
+    // This time we parse directly into Vec<Utxo> instead of raw JSON
+    let url = format!("https://blockstream.info/api/address/{}/utxo", our_address);
+    let utxos: Vec<Utxo> = reqwest::blocking::get(&url).unwrap().json().unwrap();
+
+    // Step 3: Select which UTXOs to spend — need enough to cover amount + fee
+    // Simple strategy: walk through UTXOs and keep adding until we have enough
+    // TODO: smarter UTXO selection — prefer consolidating small UTXOs to avoid dust,
+    //   but balance against the fact that more inputs = bigger tx = higher fee
+    let fee: u64 = 500; // placeholder fee in sats — we'll calculate this properly in Step 4
+    let mut selected_utxos: Vec<&Utxo> = Vec::new();
+    let mut total_input: u64 = 0;
+
+    for utxo in &utxos {
+        selected_utxos.push(utxo);
+        total_input += utxo.value;
+        // Stop once we have enough to cover the send amount + fee
+        if total_input >= send_amount + fee {
+            break;
+        }
+    }
+
+    // If we don't have enough funds, tell the user and bail out
+    if total_input < send_amount + fee {
+        println!("Not enough funds! You have {} sats but need {} sats (amount + fee)",
+            total_input, send_amount + fee);
+        return;
+    }
+
+    // Step 4: Calculate the transaction fee
+    // Fee = transaction size in bytes × fee rate (sats per byte)
+    // Size depends on number of inputs and outputs:
+    //   ~11 bytes overhead + 68 bytes per input (segwit) + 31 bytes per output
+    // We'll have 2 outputs: one for recipient, one for our change
+    let num_inputs = selected_utxos.len() as u64;
+    let num_outputs: u64 = 2; // recipient + change
+    let estimated_size: u64 = 11 + (68 * num_inputs) + (31 * num_outputs);
+
+    // Query Esplora for the current recommended fee rate (sats per byte)
+    // The API returns estimates for different confirmation targets (in blocks)
+    // We'll use the "6 block" target — roughly 1 hour confirmation time
+    let fee_url = "https://blockstream.info/api/fee-estimates";
+    let fee_estimates: serde_json::Value = reqwest::blocking::get(fee_url).unwrap().json().unwrap();
+    let sat_per_byte = fee_estimates["6"].as_f64().unwrap_or(5.0); // fallback to 5 sat/byte
+
+    let fee = (estimated_size as f64 * sat_per_byte) as u64;
+    println!("\nTransaction details:");
+    println!("  Inputs: {} UTXOs", num_inputs);
+    println!("  Estimated size: {} bytes", estimated_size);
+    println!("  Fee rate: {:.1} sat/byte", sat_per_byte);
+    println!("  Fee: {} sats", fee);
+
+    // Re-check that our selected UTXOs still cover the amount with the real fee
+    // (the placeholder fee in Step 3 might have been too low)
+    if total_input < send_amount + fee {
+        println!("Not enough funds after fee calculation! You have {} sats but need {} sats",
+            total_input, send_amount + fee);
+        return;
+    }
+
+    // Step 5: Calculate change — what's left over comes back to us
+    //   change = total input value - send amount - fee
+    //   If we forget this step, the leftover ALL goes to the miner as fee!
+    let change = total_input - send_amount - fee;
+    println!("  Sending: {} sats", send_amount);
+    println!("  Change back to us: {} sats", change);
+
+    // Step 6: Build the transaction
+    // Create inputs — each one points to a UTXO we're spending (by txid + vout)
+    let mut inputs: Vec<TxIn> = Vec::new();
+    for utxo in &selected_utxos {
+        // Parse the txid string into a Txid type
+        // OutPoint = txid + vout — the unique identifier for a specific UTXO
+        let outpoint = OutPoint::new(utxo.txid.parse().unwrap(), utxo.vout);
+        // TxIn::default() gives us an input with empty signature fields
+        // We'll fill in the signature (witness data) in sign_transaction
+        inputs.push(TxIn {
+            previous_output: outpoint,
+            ..Default::default()
+        });
+    }
+
+    // Create outputs — each one locks sats to an address via a script_pubkey
+    // script_pubkey = the locking script that says "only the owner of this address can spend"
+    let mut outputs: Vec<TxOut> = Vec::new();
+
+    // Output 1: send the amount to the recipient
+    outputs.push(TxOut {
+        value: Amount::from_sat(send_amount),
+        script_pubkey: recipient.script_pubkey(),
+    });
+
+    // Output 2: send the change back to our own address
+    if change > 0 {
+        outputs.push(TxOut {
+            value: Amount::from_sat(change),
+            script_pubkey: our_address.script_pubkey(),
+        });
+    }
+
+    // Assemble into a Transaction
+    // version = 2 (current standard), lock_time = 0 (no timelock — can be mined immediately)
+    let unsigned_tx = Transaction {
+        version: transaction::Version(2),
+        lock_time: absolute::LockTime::ZERO,
+        input: inputs,
+        output: outputs,
+    };
+
+    // Step 7: Return the unsigned transaction (signing happens in sign_transaction)
+    println!("\nUnsigned transaction built successfully!");
+    println!("  Inputs: {}", unsigned_tx.input.len());
+    println!("  Outputs: {}", unsigned_tx.output.len());
+
+    todo!() // TODO: return unsigned_tx once we wire up the full send flow
 }
 
 fn sign_transaction() {
@@ -309,7 +449,9 @@ fn save_wallet(mnemonic: &Mnemonic) {
     println!("\nWallet saved to wallet.yaml (encrypted)");
 }
 
-fn load_wallet() {
+// Loads and decrypts the wallet, returns the child private key and address
+// Used by both the menu ("Load wallet") and send_transaction
+fn load_wallet_from_file() -> (Xpriv, Address) {
     // Step 1: Read the YAML wallet file from disk
     // Get the salt, nonce, and ciphertext back
     let yaml = std::fs::read_to_string("wallet.yaml").unwrap();
@@ -365,4 +507,11 @@ fn load_wallet() {
     println!("=== WALLET LOADED SUCCESSFULLY ===");
     println!("  Fingerprint: {}", master_key.fingerprint(&secp));
     println!("  Receive address: {}", address);
+
+    (child_key, address)
+}
+
+// Menu wrapper — loads wallet and prints info, doesn't need the return values
+fn load_existing_wallet() {
+    load_wallet_from_file();
 }
